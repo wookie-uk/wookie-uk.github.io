@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8">
-<meta name="bundle-version" content="4254fa6f59e4 · 2026-10-10 18:59 UTC">
+<meta name="bundle-version" content="bfc4c35dc62b · 2026-10-11 06:26 UTC">
 <title>Farm energy</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -702,6 +702,12 @@
   .en-sw input:focus-visible+span{outline:2px solid var(--accent);outline-offset:2px}
   .en-sw input:disabled{cursor:default}.en-sw input:disabled+span{opacity:.5}
   .en-al-log{margin:6px 0 0;padding:0;list-style:none;display:grid;gap:4px;font-size:.84rem;line-height:1.4}
+  .en-al .now b.wn{color:var(--warm)}
+  .en-al .tm{display:flex;flex-wrap:wrap;gap:4px 12px;margin-top:4px}
+  .en-al .tm label{display:inline-flex;align-items:center;gap:4px;font-size:.78rem;color:var(--ink-soft)}
+  .en-al .tm input{width:4em;font:inherit;font-size:.8rem;padding:2px 4px;border:1px solid var(--rule);border-radius:4px;background:var(--surface);color:var(--ink)}
+  .en-al-log li.wn{color:var(--ink-soft)}
+  .en-hl-act li.alert{border-left-color:var(--alert)}
   .en-al-log .when{color:var(--ink-faint);font-variant-numeric:tabular-nums;margin-right:6px}
   @media (max-width:640px){
     .en-al li{grid-template-columns:auto minmax(0,1fr)}
@@ -1803,17 +1809,22 @@ window.UI=(function(){
      and what has happened public.energy_alert_events (plus the mains band spells in mains_alerts). */
   var SEL_HEALTH="select item, status, detail from public.energy_health() order by sort_order";
   var SEL_ALERTS="select t.id, t.kind, t.name, t.description as ds, t.area, t.is_enabled as on, t.threshold::float8 as th,"+
-    " t.threshold_unit as unit, t.grace_minutes as grace, t.repeat_minutes as rep, x.active as act, x.message as msg"+
+    " t.threshold_unit as unit, t.grace_minutes as grace, t.repeat_minutes as rep, x.active as act, x.message as msg,"+
+    " floor(extract(epoch from now() - coalesce("+
+    "   (select max(e.started_at) from public.energy_alert_events e where e.kind = t.kind and e.ended_at is null),"+
+    "   (select max(m.started_at) from public.mains_alerts m where m.ended_at is null and 'mains_' || m.kind = t.kind))) / 60)::int as age"+
     " from public.energy_alert_types t join public.energy_alert_conditions() x on x.kind = t.kind order by t.sort_order";
-  var SEL_ALLOG="select name, st, en, msg, n from ("+
+  var SEL_ALLOG="select name, st, en, msg, n, mins, grace from ("+
     " select e.started_at as at, t.name, to_char(e.started_at at time zone 'Europe/London','Dy DD Mon HH24:MI') as st,"+
-    " coalesce(to_char(e.ended_at at time zone 'Europe/London','Dy HH24:MI'),'') as en, e.message as msg, e.notify_count as n"+
+    " coalesce(to_char(e.ended_at at time zone 'Europe/London','Dy HH24:MI'),'') as en, e.message as msg, e.notify_count as n,"+
+    " floor(extract(epoch from coalesce(e.ended_at, now()) - e.started_at) / 60)::int as mins, t.grace_minutes as grace"+
     " from public.energy_alert_events e join public.energy_alert_types t on t.kind = e.kind"+
     " union all select m.started_at, t.name, to_char(m.started_at at time zone 'Europe/London','Dy DD Mon HH24:MI'),"+
     " coalesce(to_char(m.ended_at at time zone 'Europe/London','Dy HH24:MI'),''),"+
-    " 'Worst ' || round(m.worst_kw, 1) || ' kW', m.notify_count"+
+    " 'Worst ' || round(m.worst_kw, 1) || ' kW', m.notify_count,"+
+    " floor(extract(epoch from coalesce(m.ended_at, now()) - m.started_at) / 60)::int, t.grace_minutes"+
     " from public.mains_alerts m join public.energy_alert_types t on t.kind = 'mains_' || m.kind"+
-    ") x order by at desc limit 8";
+    ") x order by at desc limit 10";
   var health=[],alerts=[],alLog=[],alBusy=false;
   var AREA={data:"Data coming in",prices:"Agile prices",mains:"Mains",battery:"Site battery",chargers:"Chargers",system:"System"};
   var HL_WORD={ok:"OK",warn:"Check",bad:"Problem",off:"Off"};
@@ -1834,10 +1845,13 @@ window.UI=(function(){
     if(r){alerts=r.map(function(x){var th=Number(x.th);
       return {id:Number(x.id),kind:String(x.kind),name:String(x.name||""),ds:String(x.ds||""),area:String(x.area||""),on:tf(x.on),
         th:x.th===null||x.th===undefined||!isFinite(th)?null:th,unit:String(x.unit||""),grace:Number(x.grace)||0,rep:Number(x.rep)||0,
-        act:tf(x.act),msg:String(x.msg||"")};});
+        act:tf(x.act),msg:String(x.msg||""),age:x.age===null||x.age===undefined?null:Number(x.age)};});
       energyBadge();}
-    if(l)alLog=l.map(function(x){return {name:String(x.name||""),st:String(x.st||""),en:String(x.en||""),msg:String(x.msg||""),n:Number(x.n)||0};});
+    if(l)alLog=l.map(function(x){return {name:String(x.name||""),st:String(x.st||""),en:String(x.en||""),msg:String(x.msg||""),n:Number(x.n)||0,
+      mins:Number(x.mins)||0,grace:Number(x.grace)||0};});
   }
+  // Dee: an alarm held for its wait is an ALERT (phone note); shorter than that it is a WARNING (page only).
+  function alState(a){if(!a.on||!a.act)return "";return a.age!==null&&a.age<a.grace?"warning":"alert";}
   function minsTxt(m){if(m<60)return m+" min";var h=Math.floor(m/60),r=m%60;return h+" h"+(r?" "+r+" min":"");}
   function healthView(){
     var g=$("eHealth");g.textContent="";
@@ -1847,7 +1861,9 @@ window.UI=(function(){
       var dt=el("span","dt",null,d);el("span","vh",(HL_WORD[h.st]||h.st)+": ",dt);dt.appendChild(document.createTextNode(h.dt));
     });
     var act=alerts.filter(function(a){return a.on&&a.act;}),ul=$("eHlAct");ul.textContent="";
-    act.forEach(function(a){var li=el("li",null,null,ul);el("b",null,a.name,li);li.appendChild(document.createTextNode(" — "+a.msg));});
+    act.forEach(function(a){var w=alState(a)==="warning",li=el("li",w?"warn":"alert",null,ul);
+      el("b",null,(w?"Warning: ":"Alert: ")+a.name,li);
+      li.appendChild(document.createTextNode(" — "+a.msg+(w?" (becomes an alert after "+minsTxt(a.grace)+")":"")));});
     var dots=$("eHlDots");dots.textContent="";
     health.forEach(function(h){var sp=el("span",h.st,null,dots);sp.title=h.item+": "+h.dt;el("i",h.st,null,sp);
       sp.appendChild(document.createTextNode(h.item));if(h.st!=="ok")el("span","vh"," ("+(HL_WORD[h.st]||h.st)+")",sp);});
@@ -1878,15 +1894,28 @@ window.UI=(function(){
       }else{lim.className="lim none";el("span","sub","—",lim);}
       var now=el("div","now",null,li);
       if(!a.on)now.appendChild(document.createTextNode("Switched off."));
-      else if(a.act){el("b",null,"Active. ",now);now.appendChild(document.createTextNode(a.msg));}
+      else if(a.act){var w=alState(a)==="warning";el("b",w?"wn":null,w?"Warning. ":"Alert. ",now);
+        now.appendChild(document.createTextNode(a.msg+(w?" Becomes an alert after "+minsTxt(a.grace)+".":"")));}
       else now.appendChild(document.createTextNode("OK now."));
-      el("div",null,(a.grace?"Waits "+minsTxt(a.grace):"Tells you straight away")+(a.rep?"; repeats every "+minsTxt(a.rep):"")+".",now);
+      var tm=el("div","tm",null,now);
+      function minBox(lab,val,col,max,aria){
+        var l=el("label",null,lab+" ",tm),inp=el("input",null,null,l);inp.type="number";inp.min="0";inp.max=String(max);inp.step="1";
+        inp.value=String(val);inp.disabled=alBusy;inp.setAttribute("aria-label",a.name+" — "+aria);l.appendChild(document.createTextNode(" min"));
+        inp.addEventListener("change",function(){var v=Math.round(Number(inp.value));
+          if(inp.value===""||!isFinite(v)||v<0||v>max){inp.value=String(val);return;}
+          alWrite("update public.energy_alert_types set "+col+" = "+v+" where id = "+a.id);});
+      }
+      minBox("Alert after",a.grace,"grace_minutes",1440,"minutes held before it is an alert");
+      minBox("Repeat every",a.rep,"repeat_minutes",10080,"minutes between reminders, 0 for once");
     });
     var lg=$("eAlLog");lg.textContent="";
     if(!alLog.length)el("li","sub","Nothing yet.",lg);
     alLog.forEach(function(x){var li=el("li",null,null,lg);
       el("span","when",x.st+(x.en?" – "+x.en:" · ongoing"),li);el("b",null,x.name,li);
-      li.appendChild(document.createTextNode(" — "+x.msg+(x.n?" (phone note sent"+(x.n>1?" ×"+x.n:"")+")":" (no phone note)")));});
+      var kind=x.n?"alert":(x.mins>=x.grace&&x.grace>0?"alert":"warning");
+      li.className=kind==="warning"?"wn":"";
+      li.appendChild(document.createTextNode(" — "+x.msg+(x.n?" (alert, phone note sent"+(x.n>1?" ×"+x.n:"")+")"
+        :kind==="warning"?" (warning only, under "+minsTxt(Math.max(x.grace,1))+")":" (alert, not sent)")));});
   }
   function alWrite(q){
     if(alBusy)return Promise.resolve();alBusy=true;alertsView();$("eAlAt").textContent="Saving…";
