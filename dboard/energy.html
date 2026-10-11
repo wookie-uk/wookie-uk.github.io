@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8">
-<meta name="bundle-version" content="d6424444812f · 2026-10-11 06:40 UTC">
+<meta name="bundle-version" content="117742dae2e4 · 2026-10-11 07:20 UTC">
 <title>Farm energy</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -714,6 +714,7 @@
   .en-al-log .pick input{margin:3px 0 0;accent-color:var(--accent)}
   .en-al-log .tag{display:inline-block;font-size:.68rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase;padding:0 5px;margin-right:6px;border-radius:3px;border:1px solid currentColor}
   .en-al-log .tag.alert{color:var(--alert)}.en-al-log .tag.warning{color:var(--warm)}.en-al-log .tag.dis{color:var(--ink-faint)}
+  .en-al-log .dur{display:inline-block;font-size:.75rem;font-variant-numeric:tabular-nums;color:var(--ink-soft);background:var(--surface);border:1px solid var(--rule);border-radius:3px;padding:0 5px;margin-right:6px}
   .en-al-log .rev{font-size:.8rem;line-height:1.4;margin-top:3px;color:var(--ink-soft)}
   .en-al-log .rev b{font-weight:600}
   .en-al-log .rev.real b{color:var(--alert)}.en-al-log .rev.measurement b,.en-al-log .rev.timing b{color:var(--accent)}
@@ -1836,8 +1837,8 @@ window.UI=(function(){
   var SEL_ALERTS="select t.id, t.kind, t.name, t.description as ds, t.area, t.is_enabled as on, t.threshold::float8 as th,"+
     " t.threshold_unit as unit, t.grace_minutes as grace, t.repeat_minutes as rep, x.active as act, x.message as msg,"+
     " floor(extract(epoch from now() - coalesce("+
-    "   (select max(e.started_at) from public.energy_alert_events e where e.kind = t.kind and e.ended_at is null),"+
-    "   (select max(m.started_at) from public.mains_alerts m where m.ended_at is null and 'mains_' || m.kind = t.kind))) / 60)::int as age"+
+    "   (select max(e.started_at) from public.energy_alert_events e where e.kind = t.kind and e.ended_at is null and e.confirmed_at is not null),"+
+    "   (select max(m.started_at) from public.mains_alerts m where m.ended_at is null and m.confirmed_at is not null and 'mains_' || m.kind = t.kind))) / 60)::int as age"+
     " from public.energy_alert_types t join public.energy_alert_conditions() x on x.kind = t.kind order by t.sort_order";
   var SEL_ALLOG="select src, id, name, st, en, msg, n, mins, grace, dis, why, ack, ackt, rv, rn from ("+
     " select 'e' as src, e.id, e.started_at as at, t.name, to_char(e.started_at at time zone 'Europe/London','Dy DD Mon HH24:MI') as st,"+
@@ -1847,7 +1848,7 @@ window.UI=(function(){
     " coalesce(to_char(e.acknowledged_at at time zone 'Europe/London','Dy HH24:MI'),'') as ackt,"+
     " e.review_verdict as rv, e.review_note as rn"+
     " from public.energy_alert_events e join public.energy_alert_types t on t.kind = e.kind"+
-    " where e.started_at > now() - interval '14 days'"+
+    " where e.started_at > now() - interval '14 days' and e.confirmed_at is not null"+
     " union all select 'm', m.id, m.started_at, t.name, to_char(m.started_at at time zone 'Europe/London','Dy DD Mon HH24:MI'),"+
     " coalesce(to_char(m.ended_at at time zone 'Europe/London','Dy HH24:MI'),''),"+
     " 'Worst ' || round(m.worst_kw, 1) || ' kW', m.notify_count,"+
@@ -1855,7 +1856,7 @@ window.UI=(function(){
     " m.is_acknowledged, coalesce(to_char(m.acknowledged_at at time zone 'Europe/London','Dy HH24:MI'),''),"+
     " m.review_verdict, m.review_note"+
     " from public.mains_alerts m join public.energy_alert_types t on t.kind = 'mains_' || m.kind"+
-    " where m.started_at > now() - interval '14 days'"+
+    " where m.started_at > now() - interval '14 days' and m.confirmed_at is not null"+
     ") x order by at desc limit 40";
   var health=[],alerts=[],alLog=[],alBusy=false;
   var AREA={data:"Data coming in",prices:"Agile prices",mains:"Mains",battery:"Site battery",chargers:"Chargers",system:"System"};
@@ -1874,10 +1875,12 @@ window.UI=(function(){
       label:flag.map(function(h){return h.item;}).join(", ")+(bad?" — problem":" — check")}:null);
   }
   function setAlerts(r,l){
-    if(r){alerts=r.map(function(x){var th=Number(x.th);
+    // Two readings in a row (Dee, 11 Oct): a condition seen once is only "checking" — it counts as active
+    // once a confirmed spell exists (age comes only from confirmed spells).
+    if(r){alerts=r.map(function(x){var th=Number(x.th),raw=tf(x.act),age=x.age===null||x.age===undefined?null:Number(x.age);
       return {id:Number(x.id),kind:String(x.kind),name:String(x.name||""),ds:String(x.ds||""),area:String(x.area||""),on:tf(x.on),
         th:x.th===null||x.th===undefined||!isFinite(th)?null:th,unit:String(x.unit||""),grace:Number(x.grace)||0,rep:Number(x.rep)||0,
-        act:tf(x.act),msg:String(x.msg||""),age:x.age===null||x.age===undefined?null:Number(x.age)};});
+        act:raw&&age!==null,chk:raw&&age===null,msg:String(x.msg||""),age:age};});
       energyBadge();}
     if(l)alLog=l.map(function(x){return {name:String(x.name||""),st:String(x.st||""),en:String(x.en||""),msg:String(x.msg||""),n:Number(x.n)||0,
       mins:Number(x.mins)||0,grace:Number(x.grace)||0,dis:tf(x.dis),why:String(x.why||""),
@@ -1930,6 +1933,7 @@ window.UI=(function(){
       if(!a.on)now.appendChild(document.createTextNode("Switched off."));
       else if(a.act){var w=alState(a)==="warning";el("b",w?"wn":null,w?"Warning. ":"Alert. ",now);
         now.appendChild(document.createTextNode(a.msg+(w?" Becomes an alert after "+minsTxt(a.grace)+".":"")));}
+      else if(a.chk)now.appendChild(document.createTextNode("OK — seen in one check, waiting for the next reading to confirm."));
       else now.appendChild(document.createTextNode("OK now."));
       var tm=el("div","tm",null,now);
       function minBox(lab,val,col,max,aria){
@@ -1965,6 +1969,14 @@ window.UI=(function(){
       cb.addEventListener("change",function(){if(cb.checked)logSel[key]=true;else delete logSel[key];logButtons();});
       var body=el("div","txt",null,li);
       el("span","when",x.st+(x.en?" – "+x.en:" · ongoing"),body);
+      // How long it was a warning, and how long an alarm (Dee): the wait before an alarm is the warning time.
+      var wMin=x.grace>0?Math.min(x.mins,x.grace):(x.mins<1?x.mins:0),aMin=k==="alert"?Math.max(0,x.mins-Math.max(x.grace,0)):0;
+      var dur=el("span","dur",null,body);
+      if(!x.dis){
+        if(k==="alert"&&x.grace===0)dur.textContent="Alarm "+minsTxt(Math.max(1,x.mins))+(x.en?"":" so far");
+        else if(k==="alert")dur.textContent="Warning "+minsTxt(Math.max(1,wMin))+" → alarm "+minsTxt(Math.max(1,aMin))+(x.en?"":" so far");
+        else dur.textContent="Warning "+minsTxt(Math.max(1,x.mins))+(x.en?"":" so far");
+      }
       el("span","tag "+(x.dis?"dis":k),x.dis?"Dismissed":k==="alert"?"Alarm":"Warning",body);
       el("b",null,x.name,body);
       if(x.dis){body.appendChild(document.createTextNode(" — "));el("span","note",x.why||"Marked as a false alarm.",body);}
