@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8">
-<meta name="bundle-version" content="117742dae2e4 · 2026-10-11 07:20 UTC">
+<meta name="bundle-version" content="1b06e1ac0ad4 · 2026-10-11 21:04 UTC">
 <title>Farm energy</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -725,6 +725,15 @@
   .en-al-log li.dis b{font-weight:600;text-decoration:line-through;text-decoration-thickness:1px}
   .en-al-log li.dis .note{font-style:italic}
   .en-hl-act li.alert{border-left-color:var(--alert)}
+  .en-notes{margin:6px 0 10px;font-size:.86rem;line-height:1.45}
+  .en-notes .nt-head{margin:0 0 6px}
+  .en-notes .nt-days{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:6px;max-width:420px}
+  .en-notes .nt-days li{display:grid;justify-items:center;gap:2px;font-variant-numeric:tabular-nums}
+  .en-notes .bar{position:relative;width:100%;max-width:28px;height:40px;background:var(--surface-alt);border-radius:3px;overflow:hidden}
+  .en-notes .bar i{position:absolute;left:0;right:0;bottom:0;background:var(--accent);border-radius:3px 3px 0 0}
+  .en-notes .bar i.x{background:var(--alert)}
+  .en-notes .n{font-size:.8rem;font-weight:600}.en-notes .d{font-size:.72rem;color:var(--ink-faint)}
+  .en-notes .nt-kinds{margin:8px 0 0;color:var(--ink-soft);font-size:.8rem}
   .en-al-log .when{color:var(--ink-faint);font-variant-numeric:tabular-nums;margin-right:6px}
   @media (max-width:640px){
     .en-al li{grid-template-columns:auto minmax(0,1fr)}
@@ -839,6 +848,33 @@
   .k.sq.gen{background:transparent;box-shadow:inset 0 -3px 0 var(--ink);border:1px solid var(--rule)}
   .k.sq.now{background:transparent;outline:2px solid var(--ink)}
   @media (max-width:560px){.pb-col{grid-template-rows:90px auto auto}.pb-lab{font-size:9px}.pb-pct{font-size:.66rem}}
+  /* ── Games view ───────────────────────────────────────────────────────────
+     Layout: a ruled figure strip (server, the month's AI spend against the
+     budget, a beat's cost, what needs attention), then one panel per area of
+     the game's health checks — a dot in the check's colour, its name and note,
+     its value, and a 30-day line. The readings are the game server's own,
+     copied here each hour; green, amber and red are the game's verdict. */
+  .gm-env{display:grid;gap:18px;min-width:0}
+  .gm-env>h2{font-family:var(--f-display);font-weight:700;font-size:1.3rem;line-height:1.2;margin:0}
+  .gm-list{list-style:none;margin:0;padding:0;display:grid;border-top:1px solid var(--rule-soft)}
+  .gm-row{display:grid;grid-template-columns:12px minmax(0,1fr) auto 72px;gap:2px 12px;align-items:center;padding:9px 0;border-bottom:1px solid var(--rule-soft)}
+  .gm-dot{width:10px;height:10px;border-radius:50%;background:var(--ink-faint)}
+  .gm-dot.green{background:var(--accent)}
+  .gm-dot.amber{background:var(--warm)}
+  .gm-dot.red{background:var(--alert);box-shadow:0 0 0 2px var(--surface),0 0 0 3px var(--alert)}
+  .gm-dot.grey{background:transparent;box-shadow:inset 0 0 0 1.5px var(--ink-faint)}
+  .gm-nm{font-weight:600;font-size:.92rem;min-width:0;overflow-wrap:anywhere}
+  .gm-nt{grid-column:2 / -1;font-size:.8rem;color:var(--ink-soft);line-height:1.4;overflow-wrap:anywhere}
+  .gm-v{font-variant-numeric:tabular-nums;font-weight:600;white-space:nowrap;text-align:right}
+  .gm-row.red .gm-v{color:var(--alert)}
+  .gm-row.amber .gm-v{color:var(--warm)}
+  .gm-row.grey .gm-v{color:var(--ink-faint);font-weight:400}
+  .gm-sp{display:block;width:72px;height:20px;overflow:visible}
+  .gm-sp polyline{fill:none;stroke:var(--ink-faint);stroke-width:1.5;stroke-linejoin:round;stroke-linecap:round}
+  .gm-sp circle{fill:var(--ink)}
+  .gm-row.red .gm-sp circle{fill:var(--alert)}
+  .gm-row.amber .gm-sp circle{fill:var(--warm)}
+  @media (max-width:520px){.gm-row{grid-template-columns:12px minmax(0,1fr) auto}.gm-sp{display:none}}
 </style>
 </head><body>
 <div class="wrap">
@@ -1025,6 +1061,34 @@
         <div class="en-rdef" id="eRuleDef"></div>
       </details>
 
+      <details class="panel en-alerts en-log" id="eLogBox">
+        <summary class="panel-head">
+          <h3>Alarm log</h3>
+          <span class="sub" id="eAlLogSum"></span>
+        </summary>
+        <div class="en-notes" id="eNotes"></div>
+        <div class="en-al-bar">
+          <span class="seg" id="eAlFilt" role="group" aria-label="Which to show">
+            <button type="button" data-f="all" aria-pressed="true">All</button>
+            <button type="button" data-f="warning" aria-pressed="false">Warnings</button>
+            <button type="button" data-f="alert" aria-pressed="false">Alarms</button>
+          </span>
+          <button type="button" class="more" id="eAckSel" disabled>Acknowledge selected</button>
+          <button type="button" class="more" id="eAckAll" disabled>Acknowledge all</button>
+        </div>
+        <ul class="en-al-log" id="eAlLog"></ul>
+      </details>
+
+      <details class="panel en-alerts" id="eAlBox">
+        <summary class="panel-head">
+          <h3>Alerts</h3>
+          <span class="sub" id="eAlSum"></span>
+          <span class="sub" id="eAlAt"></span>
+        </summary>
+        <p class="sub">Checked every minute. A condition has to show in two readings in a row before it counts as a warning. Each one sends a phone note once its wait is over, and an all-clear when it ends. Switch off any you don't want. None of them ever switches the mains off: the GX's own rules stay in charge as the fallback.</p>
+        <ul class="en-al" id="eAlerts"></ul>
+      </details>
+
       <div class="assume">
         <div class="ag">
           <h4>How a booked mains run works</h4>
@@ -1045,27 +1109,6 @@
           </dl>
         </div>
       </div>
-
-      <details class="panel en-alerts" id="eAlBox">
-        <summary class="panel-head">
-          <h3>Alerts</h3>
-          <span class="sub" id="eAlSum"></span>
-          <span class="sub" id="eAlAt"></span>
-        </summary>
-        <p class="sub">Checked every 2 minutes (the mains input every minute). Each one sends a phone note once its wait is over, and an all-clear when it ends. Switch off any you don't want. None of them ever switches the mains off: the GX's own rules stay in charge as the fallback.</p>
-        <ul class="en-al" id="eAlerts"></ul>
-        <div class="panel-head en-subhead"><h4>Alarm log</h4><span class="sub" id="eAlLogSum"></span></div>
-        <div class="en-al-bar">
-          <span class="seg" id="eAlFilt" role="group" aria-label="Which to show">
-            <button type="button" data-f="all" aria-pressed="true">All</button>
-            <button type="button" data-f="warning" aria-pressed="false">Warnings</button>
-            <button type="button" data-f="alert" aria-pressed="false">Alarms</button>
-          </span>
-          <button type="button" class="more" id="eAckSel" disabled>Acknowledge selected</button>
-          <button type="button" class="more" id="eAckAll" disabled>Acknowledge all</button>
-        </div>
-        <ul class="en-al-log" id="eAlLog"></ul>
-      </details>
 
     </div>
   </section>
@@ -1858,6 +1901,32 @@ window.UI=(function(){
     " from public.mains_alerts m join public.energy_alert_types t on t.kind = 'mains_' || m.kind"+
     " where m.started_at > now() - interval '14 days' and m.confirmed_at is not null"+
     ") x order by at desc limit 40";
+  // Phone alerts sent (Dee, 11 Oct): every ntfy attempt is in notification_log. Last 7 days per day, and by title.
+  var SEL_PHONE="select k, lab, n, bad from (select 'd' as k, to_char(g.d,'Dy') as lab, count(n.id)::int as n,"+
+    " count(n.id) filter (where n.ok is false)::int as bad, g.d as o, 0 as c"+
+    " from generate_series((now() at time zone 'Europe/London')::date - 6, (now() at time zone 'Europe/London')::date, interval '1 day') g(d)"+
+    " left join public.notification_log n on (n.sent_at at time zone 'Europe/London')::date = g.d::date group by g.d"+
+    " union all select 't', n.title, count(*)::int, count(*) filter (where not n.ok)::int, null, count(*)::int"+
+    " from public.notification_log n where n.sent_at > now() - interval '7 days' group by n.title) x order by k, o desc nulls last, c desc";
+  var phone=null;
+  function setPhone(r){if(r)phone=r.map(function(x){return {k:x.k==="t"?"t":"d",lab:String(x.lab||""),n:Number(x.n)||0,bad:Number(x.bad)||0};});}
+  function phoneView(){
+    var box=$("eNotes");if(!box)return;box.textContent="";if(!phone)return;
+    var days=phone.filter(function(x){return x.k==="d";}),kinds=phone.filter(function(x){return x.k==="t";});
+    var t=days[0]||{n:0,bad:0},wk=days.reduce(function(a,x){return a+x.n;},0),wkBad=days.reduce(function(a,x){return a+x.bad;},0);
+    var h=el("p","nt-head",null,box);el("b",null,"Phone alerts",h);
+    h.appendChild(document.createTextNode(" — today "+(t.bad?t.n+" tried: "+(t.n-t.bad)+" delivered, "+t.bad+" refused by ntfy":t.n+" sent")+
+      " · last 7 days "+wk+(wkBad?" ("+wkBad+" refused)":"")));
+    var strip=el("ol","nt-days",null,box);strip.setAttribute("aria-label","Phone alerts per day, last 7 days");
+    var max=Math.max(1,Math.max.apply(null,days.map(function(x){return x.n;})));
+    days.slice().reverse().forEach(function(x){var li=el("li",x.bad?"bad":null,null,strip);
+      var bar=el("span","bar",null,li);var f=el("i",null,null,bar);f.style.height=Math.round(x.n/max*100)+"%";
+      if(x.bad){var b=el("i","x",null,bar);b.style.height=Math.round(x.bad/max*100)+"%";}
+      el("span","n",String(x.n),li);el("span","d",x.lab,li);
+      li.title=x.lab+": "+x.n+" sent"+(x.bad?", "+x.bad+" refused":"");});
+    if(kinds.length){var k=el("p","nt-kinds",null,box);el("span","sub","By kind, 7 days: ",k);
+      k.appendChild(document.createTextNode(kinds.map(function(x){return x.lab+" "+x.n+(x.bad?" ("+x.bad+" refused)":"");}).join(" · ")));}
+  }
   var health=[],alerts=[],alLog=[],alBusy=false;
   var AREA={data:"Data coming in",prices:"Agile prices",mains:"Mains",battery:"Site battery",chargers:"Chargers",system:"System"};
   var HL_WORD={ok:"OK",warn:"Check",bad:"Problem",off:"Off"};
@@ -1956,10 +2025,12 @@ window.UI=(function(){
   function logKind(x){return x.n||(x.grace>0&&x.mins>=x.grace)?"alert":"warning";}
   function logKey(x){return x.src+":"+x.id;}
   function logView(){
+    phoneView();
     [].forEach.call($("eAlFilt").querySelectorAll("button"),function(b){b.setAttribute("aria-pressed",String(b.dataset.f===logFilter));});
     var rows=alLog.filter(function(x){return logFilter==="all"||logKind(x)===logFilter;});
     var open=alLog.filter(function(x){return !x.ack;}).length;
-    $("eAlLogSum").textContent=open?open+" unacknowledged":"all acknowledged";
+    var td=phone&&phone[0]&&phone[0].k==="d"?phone[0]:null;
+    $("eAlLogSum").textContent=(open?open+" unacknowledged":"all acknowledged")+(td?" · "+td.n+" phone alert"+(td.n===1?"":"s")+" today"+(td.bad?" ("+td.bad+" refused)":""):"");
     var lg=$("eAlLog");lg.textContent="";
     if(!rows.length)el("li","sub",logFilter==="all"?"Nothing in the last 14 days.":"None in the last 14 days.",lg);
     rows.forEach(function(x){
@@ -2025,6 +2096,9 @@ window.UI=(function(){
   // Alerts start folded too (Dee), with a one-line count; opening is remembered.
   try{if(UI.get("energy","alertsOpen",null)==="true")$("eAlBox").open=true;}catch(e){}
   $("eAlBox").addEventListener("toggle",function(){try{UI.set("energy","alertsOpen",String(this.open));}catch(e){}});
+  // The alarm log is its own fold (Dee, 11 Oct); opening is remembered.
+  try{if(UI.get("energy","logOpen",null)==="true")$("eLogBox").open=true;}catch(e){}
+  $("eLogBox").addEventListener("toggle",function(){try{UI.set("energy","logOpen",String(this.open));}catch(e){}});
   // Health starts folded to its row of dots (Dee); opening it is remembered.
   try{if(UI.get("energy","healthOpen",null)==="true")$("eHlBox").open=true;}catch(e){}
   $("eHlBox").addEventListener("toggle",function(){try{UI.set("energy","healthOpen",String(this.open));}catch(e){}});
@@ -2407,8 +2481,9 @@ window.UI=(function(){
                           SB.sql(SEL_ERDEF,{cache:false}).catch(function(){return null;}),
                           SB.sql(SEL_HEALTH,{cache:false}).catch(function(){return null;}),
                           SB.sql(SEL_ALERTS,{cache:false}).catch(function(){return null;}),
-                          SB.sql(SEL_ALLOG,{cache:false}).catch(function(){return null;})]).then(function(r){
-      setRanger(r[8]);setEr(r[9],r[10],r[15]);setFc(r[11],r[12],r[13]);setEv(r[14]);setHealth(r[16]);setAlerts(r[17],r[18]);
+                          SB.sql(SEL_ALLOG,{cache:false}).catch(function(){return null;}),
+                          SB.sql(SEL_PHONE,{cache:false}).catch(function(){return null;})]).then(function(r){
+      setRanger(r[8]);setEr(r[9],r[10],r[15]);setFc(r[11],r[12],r[13]);setEv(r[14]);setHealth(r[16]);setPhone(r[19]);setAlerts(r[17],r[18]);
       if(r[4])setCars(r[4],r[5]);
       if(r[6])setZaps(r[6],r[7]);
       trend=(r[3]||[]).map(function(x){var o={t:Number(x.t)};["soc","pv","load","mains"].forEach(function(k){var v=Number(x[k]);o[k]=x[k]===null||!isFinite(v)?null:v;});return o;}).filter(function(o){return isFinite(o.t);});
