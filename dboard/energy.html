@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8">
-<meta name="bundle-version" content="bfc4c35dc62b · 2026-10-11 06:26 UTC">
+<meta name="bundle-version" content="2b2469721a27 · 2026-10-11 06:37 UTC">
 <title>Farm energy</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -706,7 +706,19 @@
   .en-al .tm{display:flex;flex-wrap:wrap;gap:4px 12px;margin-top:4px}
   .en-al .tm label{display:inline-flex;align-items:center;gap:4px;font-size:.78rem;color:var(--ink-soft)}
   .en-al .tm input{width:4em;font:inherit;font-size:.8rem;padding:2px 4px;border:1px solid var(--rule);border-radius:4px;background:var(--surface);color:var(--ink)}
+  .en-al-bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:4px 0 6px}
+  .en-al-log li{display:grid;grid-template-columns:auto minmax(0,1fr);gap:8px;align-items:start;padding:6px 8px;border-radius:5px}
+  .en-al-log li.unack{background:var(--surface-alt);border-left:3px solid var(--warm)}
+  .en-al-log li.unack.al{border-left-color:var(--alert)}
+  .en-al-log li.ack{opacity:.75}
+  .en-al-log .pick input{margin:3px 0 0;accent-color:var(--accent)}
+  .en-al-log .tag{display:inline-block;font-size:.68rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase;padding:0 5px;margin-right:6px;border-radius:3px;border:1px solid currentColor}
+  .en-al-log .tag.alert{color:var(--alert)}.en-al-log .tag.warning{color:var(--warm)}.en-al-log .tag.dis{color:var(--ink-faint)}
+  .en-al-log .ackd{color:var(--ink-faint);font-size:.8rem}
   .en-al-log li.wn{color:var(--ink-soft)}
+  .en-al-log li.dis{color:var(--ink-faint)}
+  .en-al-log li.dis b{font-weight:600;text-decoration:line-through;text-decoration-thickness:1px}
+  .en-al-log li.dis .note{font-style:italic}
   .en-hl-act li.alert{border-left-color:var(--alert)}
   .en-al-log .when{color:var(--ink-faint);font-variant-numeric:tabular-nums;margin-right:6px}
   @media (max-width:640px){
@@ -1037,7 +1049,16 @@
         </summary>
         <p class="sub">Checked every 2 minutes (the mains input every minute). Each one sends a phone note once its wait is over, and an all-clear when it ends. Switch off any you don't want. None of them ever switches the mains off: the GX's own rules stay in charge as the fallback.</p>
         <ul class="en-al" id="eAlerts"></ul>
-        <div class="panel-head en-subhead"><h4>Recent alerts</h4></div>
+        <div class="panel-head en-subhead"><h4>Alarm log</h4><span class="sub" id="eAlLogSum"></span></div>
+        <div class="en-al-bar">
+          <span class="seg" id="eAlFilt" role="group" aria-label="Which to show">
+            <button type="button" data-f="all" aria-pressed="true">All</button>
+            <button type="button" data-f="warning" aria-pressed="false">Warnings</button>
+            <button type="button" data-f="alert" aria-pressed="false">Alarms</button>
+          </span>
+          <button type="button" class="more" id="eAckSel" disabled>Acknowledge selected</button>
+          <button type="button" class="more" id="eAckAll" disabled>Acknowledge all</button>
+        </div>
         <ul class="en-al-log" id="eAlLog"></ul>
       </details>
 
@@ -1814,17 +1835,22 @@ window.UI=(function(){
     "   (select max(e.started_at) from public.energy_alert_events e where e.kind = t.kind and e.ended_at is null),"+
     "   (select max(m.started_at) from public.mains_alerts m where m.ended_at is null and 'mains_' || m.kind = t.kind))) / 60)::int as age"+
     " from public.energy_alert_types t join public.energy_alert_conditions() x on x.kind = t.kind order by t.sort_order";
-  var SEL_ALLOG="select name, st, en, msg, n, mins, grace from ("+
-    " select e.started_at as at, t.name, to_char(e.started_at at time zone 'Europe/London','Dy DD Mon HH24:MI') as st,"+
+  var SEL_ALLOG="select src, id, name, st, en, msg, n, mins, grace, dis, why, ack, ackt from ("+
+    " select 'e' as src, e.id, e.started_at as at, t.name, to_char(e.started_at at time zone 'Europe/London','Dy DD Mon HH24:MI') as st,"+
     " coalesce(to_char(e.ended_at at time zone 'Europe/London','Dy HH24:MI'),'') as en, e.message as msg, e.notify_count as n,"+
-    " floor(extract(epoch from coalesce(e.ended_at, now()) - e.started_at) / 60)::int as mins, t.grace_minutes as grace"+
+    " floor(extract(epoch from coalesce(e.ended_at, now()) - e.started_at) / 60)::int as mins, t.grace_minutes as grace,"+
+    " e.is_dismissed as dis, e.dismissed_reason as why, e.is_acknowledged as ack,"+
+    " coalesce(to_char(e.acknowledged_at at time zone 'Europe/London','Dy HH24:MI'),'') as ackt"+
     " from public.energy_alert_events e join public.energy_alert_types t on t.kind = e.kind"+
-    " union all select m.started_at, t.name, to_char(m.started_at at time zone 'Europe/London','Dy DD Mon HH24:MI'),"+
+    " where e.started_at > now() - interval '14 days'"+
+    " union all select 'm', m.id, m.started_at, t.name, to_char(m.started_at at time zone 'Europe/London','Dy DD Mon HH24:MI'),"+
     " coalesce(to_char(m.ended_at at time zone 'Europe/London','Dy HH24:MI'),''),"+
     " 'Worst ' || round(m.worst_kw, 1) || ' kW', m.notify_count,"+
-    " floor(extract(epoch from coalesce(m.ended_at, now()) - m.started_at) / 60)::int, t.grace_minutes"+
+    " floor(extract(epoch from coalesce(m.ended_at, now()) - m.started_at) / 60)::int, t.grace_minutes, m.is_dismissed, m.dismissed_reason,"+
+    " m.is_acknowledged, coalesce(to_char(m.acknowledged_at at time zone 'Europe/London','Dy HH24:MI'),'')"+
     " from public.mains_alerts m join public.energy_alert_types t on t.kind = 'mains_' || m.kind"+
-    ") x order by at desc limit 10";
+    " where m.started_at > now() - interval '14 days'"+
+    ") x order by at desc limit 40";
   var health=[],alerts=[],alLog=[],alBusy=false;
   var AREA={data:"Data coming in",prices:"Agile prices",mains:"Mains",battery:"Site battery",chargers:"Chargers",system:"System"};
   var HL_WORD={ok:"OK",warn:"Check",bad:"Problem",off:"Off"};
@@ -1848,7 +1874,8 @@ window.UI=(function(){
         act:tf(x.act),msg:String(x.msg||""),age:x.age===null||x.age===undefined?null:Number(x.age)};});
       energyBadge();}
     if(l)alLog=l.map(function(x){return {name:String(x.name||""),st:String(x.st||""),en:String(x.en||""),msg:String(x.msg||""),n:Number(x.n)||0,
-      mins:Number(x.mins)||0,grace:Number(x.grace)||0};});
+      mins:Number(x.mins)||0,grace:Number(x.grace)||0,dis:tf(x.dis),why:String(x.why||""),
+      src:x.src==="m"?"m":"e",id:Number(x.id),ack:tf(x.ack),ackt:String(x.ackt||"")};});
   }
   // Dee: an alarm held for its wait is an ALERT (phone note); shorter than that it is a WARNING (page only).
   function alState(a){if(!a.on||!a.act)return "";return a.age!==null&&a.age<a.grace?"warning":"alert";}
@@ -1873,7 +1900,8 @@ window.UI=(function(){
   function alertsView(){
     var ul=$("eAlerts");ul.textContent="";
     var nOn=alerts.filter(function(a){return a.on;}).length,nAct=alerts.filter(function(a){return a.on&&a.act;}).length;
-    $("eAlSum").textContent=alerts.length?(nAct?nAct+" active · ":"")+nOn+" of "+alerts.length+" on":"";
+    var nUn=alLog.filter(function(x){return !x.ack;}).length;
+    $("eAlSum").textContent=alerts.length?(nAct?nAct+" active · ":"")+(nUn?nUn+" unacknowledged · ":"")+nOn+" of "+alerts.length+" on":"";
     if(!alerts.length){el("li",null,"No alerts set up.",ul);return;}
     var hd=el("li","hd",null,ul);["On","Alert","Limit","Now"].forEach(function(t){el("span",null,t,hd);});
     var area=null;
@@ -1908,19 +1936,63 @@ window.UI=(function(){
       minBox("Alert after",a.grace,"grace_minutes",1440,"minutes held before it is an alert");
       minBox("Repeat every",a.rep,"repeat_minutes",10080,"minutes between reminders, 0 for once");
     });
-    var lg=$("eAlLog");lg.textContent="";
-    if(!alLog.length)el("li","sub","Nothing yet.",lg);
-    alLog.forEach(function(x){var li=el("li",null,null,lg);
-      el("span","when",x.st+(x.en?" – "+x.en:" · ongoing"),li);el("b",null,x.name,li);
-      var kind=x.n?"alert":(x.mins>=x.grace&&x.grace>0?"alert":"warning");
-      li.className=kind==="warning"?"wn":"";
-      li.appendChild(document.createTextNode(" — "+x.msg+(x.n?" (alert, phone note sent"+(x.n>1?" ×"+x.n:"")+")"
-        :kind==="warning"?" (warning only, under "+minsTxt(Math.max(x.grace,1))+")":" (alert, not sent)")));});
+    logView();
   }
+  /* The alarm log (Dee, 11 Oct 2026): every warning and alarm, newest first. Each starts unacknowledged;
+     tick rows and press "Acknowledge selected", or "Acknowledge all" for everything the filter shows.
+     Acknowledging only records that it has been seen — reminders stop when the condition clears. */
+  var logFilter="all",logSel={};
+  try{var lf=UI.get("energy","alarmFilter",null);if(lf==="warning"||lf==="alert")logFilter=lf;}catch(e){}
+  function logKind(x){return x.n||(x.grace>0&&x.mins>=x.grace)?"alert":"warning";}
+  function logKey(x){return x.src+":"+x.id;}
+  function logView(){
+    [].forEach.call($("eAlFilt").querySelectorAll("button"),function(b){b.setAttribute("aria-pressed",String(b.dataset.f===logFilter));});
+    var rows=alLog.filter(function(x){return logFilter==="all"||logKind(x)===logFilter;});
+    var open=alLog.filter(function(x){return !x.ack;}).length;
+    $("eAlLogSum").textContent=open?open+" unacknowledged":"all acknowledged";
+    var lg=$("eAlLog");lg.textContent="";
+    if(!rows.length)el("li","sub",logFilter==="all"?"Nothing in the last 14 days.":"None in the last 14 days.",lg);
+    rows.forEach(function(x){
+      var k=logKind(x),key=logKey(x),li=el("li",(x.dis?"dis":k==="warning"?"wn":"al")+(x.ack?" ack":" unack"),null,lg);
+      var lab=el("label","pick",null,li),cb=el("input",null,null,lab);cb.type="checkbox";
+      cb.checked=!!logSel[key];cb.disabled=x.ack||alBusy;cb.setAttribute("aria-label","Select "+x.name+" "+x.st);
+      cb.addEventListener("change",function(){if(cb.checked)logSel[key]=true;else delete logSel[key];logButtons();});
+      var body=el("div","txt",null,li);
+      el("span","when",x.st+(x.en?" – "+x.en:" · ongoing"),body);
+      el("span","tag "+(x.dis?"dis":k),x.dis?"Dismissed":k==="alert"?"Alarm":"Warning",body);
+      el("b",null,x.name,body);
+      if(x.dis){body.appendChild(document.createTextNode(" — "));el("span","note",x.why||"Marked as a false alarm.",body);}
+      else body.appendChild(document.createTextNode(" — "+x.msg+(x.n?" (phone note sent"+(x.n>1?" ×"+x.n:"")+")"
+        :k==="warning"?" (under "+minsTxt(Math.max(x.grace,1))+", page only)":" (not sent)")));
+      if(x.ack)el("span","ackd"," Acknowledged"+(x.ackt?" "+x.ackt:"")+".",body);
+    });
+    logButtons();
+  }
+  function logButtons(){
+    var visible=alLog.filter(function(x){return !x.ack&&(logFilter==="all"||logKind(x)===logFilter);});
+    var n=Object.keys(logSel).length;
+    $("eAckSel").disabled=alBusy||!n;$("eAckSel").textContent=n?"Acknowledge selected ("+n+")":"Acknowledge selected";
+    $("eAckAll").disabled=alBusy||!visible.length;
+    $("eAckAll").textContent=visible.length?"Acknowledge all ("+visible.length+")":"Acknowledge all";
+  }
+  function ackRows(list){
+    var e=list.filter(function(x){return x.src==="e";}).map(function(x){return x.id;}),
+        m=list.filter(function(x){return x.src==="m";}).map(function(x){return x.id;}),q=[];
+    if(e.length)q.push("update public.energy_alert_events set is_acknowledged = true, acknowledged_at = now() where not is_acknowledged and id in ("+e.join(",")+")");
+    if(m.length)q.push("update public.mains_alerts set is_acknowledged = true, acknowledged_at = now() where not is_acknowledged and id in ("+m.join(",")+")");
+    if(!q.length)return;
+    logSel={};alWrite(q.join("; "));
+  }
+  $("eAlFilt").addEventListener("click",function(ev){var b=ev.target.closest?ev.target.closest("button"):null;if(!b||!b.dataset.f)return;
+    logFilter=b.dataset.f;try{UI.set("energy","alarmFilter",logFilter);}catch(e){}logSel={};logView();});
+  $("eAckSel").addEventListener("click",function(){ackRows(alLog.filter(function(x){return logSel[logKey(x)]&&!x.ack;}));});
+  $("eAckAll").addEventListener("click",function(ev){var b=ev.currentTarget;
+    if(!b.dataset.armed){b.dataset.armed="1";b.textContent="Sure? Acknowledge all";setTimeout(function(){delete b.dataset.armed;logButtons();},5000);return;}
+    delete b.dataset.armed;ackRows(alLog.filter(function(x){return !x.ack&&(logFilter==="all"||logKind(x)===logFilter);}));});
   function alWrite(q){
     if(alBusy)return Promise.resolve();alBusy=true;alertsView();$("eAlAt").textContent="Saving…";
     return SB.write(q+"; select 1 as ok").then(function(){
-      return Promise.all([SB.sql(SEL_ALERTS,{cache:false}),SB.sql(SEL_HEALTH,{cache:false})]).then(function(r){setAlerts(r[0],null);setHealth(r[1]);});
+      return Promise.all([SB.sql(SEL_ALERTS,{cache:false}),SB.sql(SEL_HEALTH,{cache:false}),SB.sql(SEL_ALLOG,{cache:false})]).then(function(r){setAlerts(r[0],r[2]);setHealth(r[1]);});
     }).then(function(){$("eAlAt").textContent="Saved";},function(e){$("eAlAt").textContent=SB.explain(e);})
       .then(function(){alBusy=false;alertsView();healthView();});
   }
