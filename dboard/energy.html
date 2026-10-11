@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8">
-<meta name="bundle-version" content="2b2469721a27 · 2026-10-11 06:37 UTC">
+<meta name="bundle-version" content="d6424444812f · 2026-10-11 06:40 UTC">
 <title>Farm energy</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -714,6 +714,10 @@
   .en-al-log .pick input{margin:3px 0 0;accent-color:var(--accent)}
   .en-al-log .tag{display:inline-block;font-size:.68rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase;padding:0 5px;margin-right:6px;border-radius:3px;border:1px solid currentColor}
   .en-al-log .tag.alert{color:var(--alert)}.en-al-log .tag.warning{color:var(--warm)}.en-al-log .tag.dis{color:var(--ink-faint)}
+  .en-al-log .rev{font-size:.8rem;line-height:1.4;margin-top:3px;color:var(--ink-soft)}
+  .en-al-log .rev b{font-weight:600}
+  .en-al-log .rev.real b{color:var(--alert)}.en-al-log .rev.measurement b,.en-al-log .rev.timing b{color:var(--accent)}
+  .en-al-log .rev.none{color:var(--ink-faint);font-style:italic}
   .en-al-log .ackd{color:var(--ink-faint);font-size:.8rem}
   .en-al-log li.wn{color:var(--ink-soft)}
   .en-al-log li.dis{color:var(--ink-faint)}
@@ -1835,19 +1839,21 @@ window.UI=(function(){
     "   (select max(e.started_at) from public.energy_alert_events e where e.kind = t.kind and e.ended_at is null),"+
     "   (select max(m.started_at) from public.mains_alerts m where m.ended_at is null and 'mains_' || m.kind = t.kind))) / 60)::int as age"+
     " from public.energy_alert_types t join public.energy_alert_conditions() x on x.kind = t.kind order by t.sort_order";
-  var SEL_ALLOG="select src, id, name, st, en, msg, n, mins, grace, dis, why, ack, ackt from ("+
+  var SEL_ALLOG="select src, id, name, st, en, msg, n, mins, grace, dis, why, ack, ackt, rv, rn from ("+
     " select 'e' as src, e.id, e.started_at as at, t.name, to_char(e.started_at at time zone 'Europe/London','Dy DD Mon HH24:MI') as st,"+
     " coalesce(to_char(e.ended_at at time zone 'Europe/London','Dy HH24:MI'),'') as en, e.message as msg, e.notify_count as n,"+
     " floor(extract(epoch from coalesce(e.ended_at, now()) - e.started_at) / 60)::int as mins, t.grace_minutes as grace,"+
     " e.is_dismissed as dis, e.dismissed_reason as why, e.is_acknowledged as ack,"+
-    " coalesce(to_char(e.acknowledged_at at time zone 'Europe/London','Dy HH24:MI'),'') as ackt"+
+    " coalesce(to_char(e.acknowledged_at at time zone 'Europe/London','Dy HH24:MI'),'') as ackt,"+
+    " e.review_verdict as rv, e.review_note as rn"+
     " from public.energy_alert_events e join public.energy_alert_types t on t.kind = e.kind"+
     " where e.started_at > now() - interval '14 days'"+
     " union all select 'm', m.id, m.started_at, t.name, to_char(m.started_at at time zone 'Europe/London','Dy DD Mon HH24:MI'),"+
     " coalesce(to_char(m.ended_at at time zone 'Europe/London','Dy HH24:MI'),''),"+
     " 'Worst ' || round(m.worst_kw, 1) || ' kW', m.notify_count,"+
     " floor(extract(epoch from coalesce(m.ended_at, now()) - m.started_at) / 60)::int, t.grace_minutes, m.is_dismissed, m.dismissed_reason,"+
-    " m.is_acknowledged, coalesce(to_char(m.acknowledged_at at time zone 'Europe/London','Dy HH24:MI'),'')"+
+    " m.is_acknowledged, coalesce(to_char(m.acknowledged_at at time zone 'Europe/London','Dy HH24:MI'),''),"+
+    " m.review_verdict, m.review_note"+
     " from public.mains_alerts m join public.energy_alert_types t on t.kind = 'mains_' || m.kind"+
     " where m.started_at > now() - interval '14 days'"+
     ") x order by at desc limit 40";
@@ -1875,7 +1881,7 @@ window.UI=(function(){
       energyBadge();}
     if(l)alLog=l.map(function(x){return {name:String(x.name||""),st:String(x.st||""),en:String(x.en||""),msg:String(x.msg||""),n:Number(x.n)||0,
       mins:Number(x.mins)||0,grace:Number(x.grace)||0,dis:tf(x.dis),why:String(x.why||""),
-      src:x.src==="m"?"m":"e",id:Number(x.id),ack:tf(x.ack),ackt:String(x.ackt||"")};});
+      src:x.src==="m"?"m":"e",id:Number(x.id),ack:tf(x.ack),ackt:String(x.ackt||""),rv:String(x.rv||""),rn:String(x.rn||"")};});
   }
   // Dee: an alarm held for its wait is an ALERT (phone note); shorter than that it is a WARNING (page only).
   function alState(a){if(!a.on||!a.act)return "";return a.age!==null&&a.age<a.grace?"warning":"alert";}
@@ -1964,6 +1970,10 @@ window.UI=(function(){
       if(x.dis){body.appendChild(document.createTextNode(" — "));el("span","note",x.why||"Marked as a false alarm.",body);}
       else body.appendChild(document.createTextNode(" — "+x.msg+(x.n?" (phone note sent"+(x.n>1?" ×"+x.n:"")+")"
         :k==="warning"?" (under "+minsTxt(Math.max(x.grace,1))+", page only)":" (not sent)")));
+      // Daily review (Dee: is it real or a measurement error?)
+      var RV={real:"Checked: real",measurement:"Checked: measurement error",timing:"Checked: timing",unclear:"Checked: unclear"};
+      if(x.rv&&RV[x.rv]){var rv=el("div","rev "+x.rv,null,body);el("b",null,RV[x.rv]+". ",rv);rv.appendChild(document.createTextNode(x.rn));}
+      else if(!x.dis)el("div","rev none","Not reviewed yet — checked each morning.",body);
       if(x.ack)el("span","ackd"," Acknowledged"+(x.ackt?" "+x.ackt:"")+".",body);
     });
     logButtons();
