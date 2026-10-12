@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8">
-<meta name="bundle-version" content="c84e2e48fda2 · 2026-10-12 13:09 UTC">
+<meta name="bundle-version" content="65697a4e5536 · 2026-10-12 14:28 UTC">
 <title>Farm energy</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -705,6 +705,8 @@
   .en-al .now b.wn{color:var(--warm)}
   .en-al .tm{display:flex;flex-wrap:wrap;gap:4px 12px;margin-top:4px}
   .en-al .tm label{display:inline-flex;align-items:center;gap:4px;font-size:.78rem;color:var(--ink-soft)}
+  .en-al .tm label.ph{font-weight:600;color:var(--ink)}
+  .en-al .tm label.ph input{width:auto;padding:0;accent-color:var(--accent)}
   .en-al .tm input{width:4em;font:inherit;font-size:.8rem;padding:2px 4px;border:1px solid var(--rule);border-radius:4px;background:var(--surface);color:var(--ink)}
   .en-al-bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:4px 0 6px}
   .en-al-log li{display:grid;grid-template-columns:auto minmax(0,1fr);gap:8px;align-items:start;padding:6px 8px;border-radius:5px}
@@ -1137,7 +1139,7 @@
           <span class="sub" id="eAlSum"></span>
           <span class="sub" id="eAlAt"></span>
         </summary>
-        <p class="sub">Checked every minute. A condition has to show in two readings in a row before it counts as a warning. Each one sends a phone note once its wait is over, and an all-clear when it ends. Switch off any you don't want. None of them ever switches the mains off: the GX's own rules stay in charge as the fallback.</p>
+        <p class="sub">Checked every minute. A condition has to show in two readings in a row before it counts as a warning. Alerts with <b>Phone</b> ticked send one phone note when their wait is over (once per event, no all-clear); the rest show here and in the Alarm log only. Switch off any you don't want. None of them ever switches the mains off: the GX's own rules stay in charge as the fallback.</p>
         <ul class="en-al" id="eAlerts"></ul>
       </details>
 
@@ -1955,7 +1957,7 @@ window.UI=(function(){
      and what has happened public.energy_alert_events (plus the mains band spells in mains_alerts). */
   var SEL_HEALTH="select item, status, detail from public.energy_health() order by sort_order";
   var SEL_ALERTS="select t.id, t.kind, t.name, t.description as ds, t.area, t.is_enabled as on, t.threshold::float8 as th,"+
-    " t.threshold_unit as unit, t.grace_minutes as grace, t.repeat_minutes as rep, x.active as act, x.message as msg,"+
+    " t.threshold_unit as unit, t.grace_minutes as grace, t.repeat_minutes as rep, t.phone as ph, x.active as act, x.message as msg,"+
     " floor(extract(epoch from now() - coalesce("+
     "   (select max(e.started_at) from public.energy_alert_events e where e.kind = t.kind and e.ended_at is null and e.confirmed_at is not null),"+
     "   (select max(m.started_at) from public.mains_alerts m where m.ended_at is null and m.confirmed_at is not null and 'mains_' || m.kind = t.kind))) / 60)::int as age"+
@@ -2107,7 +2109,7 @@ window.UI=(function(){
     // once a confirmed spell exists (age comes only from confirmed spells).
     if(r){alerts=r.map(function(x){var th=Number(x.th),raw=tf(x.act),age=x.age===null||x.age===undefined?null:Number(x.age);
       return {id:Number(x.id),kind:String(x.kind),name:String(x.name||""),ds:String(x.ds||""),area:String(x.area||""),on:tf(x.on),
-        th:x.th===null||x.th===undefined||!isFinite(th)?null:th,unit:String(x.unit||""),grace:Number(x.grace)||0,rep:Number(x.rep)||0,
+        th:x.th===null||x.th===undefined||!isFinite(th)?null:th,unit:String(x.unit||""),grace:Number(x.grace)||0,rep:Number(x.rep)||0,ph:tf(x.ph),
         act:raw&&age!==null,chk:raw&&age===null,msg:String(x.msg||""),age:age};});
       energyBadge();}
     if(l)alLog=l.map(function(x){return {name:String(x.name||""),st:String(x.st||""),en:String(x.en||""),msg:String(x.msg||""),n:Number(x.n)||0,
@@ -2173,6 +2175,10 @@ window.UI=(function(){
       }
       minBox("Alert after",a.grace,"grace_minutes",1440,"minutes held before it is an alert");
       minBox("Repeat every",a.rep,"repeat_minutes",10080,"minutes between reminders, 0 for once");
+      // Phone switch (Dee, 12 Oct 2026): only major events reach the phone, once each.
+      var pl=el("label","ph",null,tm),pc=el("input",null,null,pl);pc.type="checkbox";pc.checked=a.ph;pc.disabled=alBusy||!a.on;
+      pc.setAttribute("aria-label",a.name+" — send a phone note");pl.appendChild(document.createTextNode(" Phone"));
+      pc.addEventListener("change",function(){alWrite("update public.energy_alert_types set phone = "+(pc.checked?"true":"false")+" where id = "+a.id);});
     });
     logView();
   }
