@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8">
-<meta name="bundle-version" content="e0debab3cf4d · 2026-10-12 12:23 UTC">
+<meta name="bundle-version" content="c84e2e48fda2 · 2026-10-12 13:09 UTC">
 <title>Farm energy</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -725,6 +725,27 @@
   .en-al-log li.dis b{font-weight:600;text-decoration:line-through;text-decoration-thickness:1px}
   .en-al-log li.dis .note{font-style:italic}
   .en-hl-act li.alert{border-left-color:var(--alert)}
+  .en-surv .sv-now{margin:6px 0 10px;padding:10px 12px;border-radius:6px;border:1px solid var(--rule);background:var(--surface-alt);display:grid;gap:4px}
+  .en-surv .sv-now p{margin:0}
+  .en-surv .sv-now.off{border-color:var(--warm);border-left:4px solid var(--warm)}
+  .en-surv .sv-now.due{border-color:var(--alert);border-left-color:var(--alert)}
+  .en-surv .sv-big{font-size:1.05rem}
+  .en-surv .sv-now .sv-act{justify-self:start;font-weight:600}
+  .en-surv .sv-now button{justify-self:start}
+  .en-surv .sv-err{color:var(--alert);font-size:.85rem}
+  .en-surv .sv-how{margin:0 0 10px;font-size:.88rem}
+  .en-surv .sv-how summary{cursor:pointer;font-weight:600}
+  .en-surv .sv-how ol{margin:6px 0;padding-left:1.3em;display:grid;gap:4px}
+  .en-surv .sv-list{list-style:none;margin:0 0 8px;padding:0;display:grid;gap:6px}
+  .en-surv .sv-list li{display:grid;grid-template-columns:minmax(0,11rem) minmax(0,1fr) auto;gap:4px 12px;align-items:center;padding:7px 8px;border-radius:5px;border:1px solid var(--rule)}
+  .en-surv .sv-list li.off{border-left:4px solid var(--warm)}
+  .en-surv .sv-list li.done{border-left:4px solid var(--accent)}
+  .en-surv .sv-list li.noisy{border-left:4px solid var(--alert)}
+  .en-surv .sv-nm{display:grid;min-width:0}.en-surv .sv-nm .sub{font-size:.75rem}
+  .en-surv .sv-res{font-size:.86rem;min-width:0;font-variant-numeric:tabular-nums}
+  .en-surv .sv-list li.todo .sv-res{color:var(--ink-faint)}
+  .en-surv .sv-btns{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+  @media (max-width:560px){.en-surv .sv-list li{grid-template-columns:minmax(0,1fr) auto}.en-surv .sv-res{grid-column:1 / -1;grid-row:2}}
   .en-hold{margin:4px 0 12px;padding:8px 10px;border:1px solid var(--rule);border-radius:6px;background:var(--surface-alt);font-size:.88rem;line-height:1.5}
   .en-hold .hd-row{display:grid;grid-template-columns:auto minmax(0,1fr);gap:10px;align-items:start}
   .en-hold input[type=number]{width:4.2em;margin:0 3px;font:inherit;padding:1px 4px}
@@ -1067,6 +1088,29 @@
           <div class="en-re-act"><button type="submit" class="more" id="eReSave">Save</button><button type="button" class="more" id="eReCancel">Cancel</button><span class="hb-msg" id="eReMsg" role="status"></span></div>
         </form>
         <div class="en-rdef" id="eRuleDef"></div>
+      </details>
+
+      <details class="panel en-surv" id="eSurvBox">
+        <summary class="panel-head">
+          <h3>Breaker audit</h3>
+          <span class="sub" id="eSurvSum"></span>
+        </summary>
+        <div class="sv-now" id="eSurvNow" role="status" aria-live="polite"></div>
+        <details class="sv-how" id="eSurvHow">
+          <summary>How to run it</summary>
+          <ol>
+            <li><b>Pick a quiet time.</b> No car charging, no cooking, washing or kettle. Late evening is ideal. Keep <b>Live</b> ticked at the top of the Energy tab so you can watch the load drop.</li>
+            <li><b>Check it's safe to stop each circuit for 3 minutes.</b> Nothing in the Alpaca Barn that mustn't stop, and warn anyone in the house before you do House. The heat pump may take a few minutes to restart.</li>
+            <li><b>Leave the Main switch and both Solar Inverter breakers on.</b></li>
+            <li>For each breaker: <b>tap “Switch off now”, then switch the breaker off.</b> The banner shows which breaker is off and counts 3 minutes.</li>
+            <li>When the banner says so, <b>tap “Back on”, then switch the breaker back on.</b></li>
+            <li><b>Wait for the 3-minute gap</b> the banner counts down before the next breaker, so each test's readings stay separate.</li>
+            <li>Each result appears about 3 minutes after the breaker goes back on. A result marked “noisy” means something else switched during the test: redo it.</li>
+          </ol>
+          <p class="sub">About 6 minutes a breaker, 50 minutes for all eight. You can stop and carry on later: the tests are saved.</p>
+        </details>
+        <ol class="sv-list" id="eSurvList"></ol>
+        <p class="sub" id="eSurvTot"></p>
       </details>
 
       <details class="panel en-alerts en-log" id="eLogBox">
@@ -1960,6 +2004,88 @@ window.UI=(function(){
     if(kinds.length){var k=el("p","nt-kinds",null,box);el("span","sub","By kind, 7 days: ",k);
       k.appendChild(document.createTextNode(kinds.map(function(x){return x.lab+" "+x.n+(x.bad?" ("+x.bad+" refused)":"");}).join(" · ")));}
   }
+  /* Breaker audit (Dee, 12 Oct 2026): a checklist for switching DB1's circuits off one at a time. Each test is a row
+     of public.breaker_survey_steps (off_at / on_at written when Dee taps); public.breaker_survey_results() works out
+     the circuit's draw from the one-minute GX readings. 3 min off, 3 min gap, so the readings of tests don't mix. */
+  var SV_OFF=180,SV_GAP=180;
+  var SV_LIST=[["Water Plant","Green-handled breaker"],["Pool Heat Pump","C32"],["Alpaca Barn","B40 · feeds the barn's board"],
+    ["Wool Barn","C63 · barn board, then container and farm shop"],["Sockets","B20"],["Outside Socket","B20"],["Lights","B6"],["House","B63 · house board, then brewery room"]];
+  var SEL_SURV="select id, circuit, off_epoch::float8 as offe, on_epoch::float8 as one, before_w::float8 as bw, during_w::float8 as dw,"+
+    " after_w::float8 as aw, draw_w::float8 as draw, spread_w::float8 as sp, n_during as nd from public.breaker_survey_results(14)";
+  var surv=null,svBusy=false,svMsg="",svTick=null,svPoll=0;
+  function setSurv(r){if(r)surv=r.map(function(x){var n=function(k){var v=Number(x[k]);return x[k]===null||x[k]===undefined||!isFinite(v)?null:v;};
+    return {id:Number(x.id),c:String(x.circuit||""),off:n("offe"),on:n("one"),bw:n("bw"),dw:n("dw"),aw:n("aw"),draw:n("draw"),sp:n("sp"),nd:n("nd")||0};});}
+  function svOpen(){return surv?surv.find(function(x){return x.on===null;}):null;}
+  function svLastOn(){var t=null;(surv||[]).forEach(function(x){if(x.on!==null&&(t===null||x.on>t))t=x.on;});return t;}
+  function mmss(sec){sec=Math.max(0,Math.round(sec));return Math.floor(sec/60)+":"+pad(sec%60);}
+  function hm(ep){var d=new Date(ep*1000);return pad(d.getHours())+":"+pad(d.getMinutes());}
+  function kw(w){return w===null?"?":(Math.abs(w)>=1000?(w/1000).toFixed(2)+" kW":Math.round(w)+" W");}
+  function svLiveLoad(){var v=live&&live.values?live.values["system/0/Ac/Consumption/L1/Power"]:null;return v===null||v===undefined||!isFinite(Number(v))?null:{w:Number(v),at:live.at};}
+  function svResult(x){
+    if(x.on===null)return {t:"Off now",k:"off"};
+    var since=Date.now()/1000-x.on;
+    if(x.draw===null||(x.aw===null&&since<SV_GAP+30))return {t:"Back on "+hm(x.on)+" · result in about "+mmss(SV_GAP+30-since),k:"wait"};
+    var noisy=x.sp!==null&&x.sp>Math.max(250,Math.abs(x.draw)*0.5);
+    var t=(x.draw<=50?"Little or nothing (":"About ")+kw(Math.max(0,x.draw))+(x.draw<=50?")":"")+" · load "+kw(x.bw!==null?x.bw:x.aw)+" → "+kw(x.dw)+" while off";
+    return {t:t+(noisy?" · noisy, redo it":""),k:noisy?"noisy":"done"};
+  }
+  function survView(){
+    var box=$("eSurvNow");if(!box)return;
+    var open=svOpen(),now=Date.now()/1000,lastOn=svLastOn(),gapLeft=lastOn!==null?SV_GAP-(now-lastOn):0,ll=svLiveLoad();
+    box.textContent="";box.className="sv-now"+(open?" off":"");
+    if(open&&!$("eSurvBox").open)$("eSurvBox").open=true;
+    if(!surv){el("p",null,"Loading…",box);}
+    else if(open){
+      var el1=now-open.off,due=el1>=SV_OFF;box.className="sv-now off"+(due?" due":"");
+      var h=el("p","sv-big",null,box);el("b",null,open.c+" is OFF",h);
+      h.appendChild(document.createTextNode(" · "+mmss(el1)+" of "+mmss(SV_OFF)));
+      el("p",null,due?"Time to switch it back on: tap Back on, then switch the breaker on.":"Switch it back on at "+hm(open.off+SV_OFF)+". Leave everything else as it is.",box);
+      if(ll)el("p","sub","Live load now "+kw(ll.w)+" (read "+ll.at+").",box);
+      else el("p","sub","Tick Live at the top of the Energy tab to watch the load.",box);
+      var b=el("button","more sv-act",due?"Back on now":"Back on (early)",box);b.type="button";b.disabled=svBusy;
+      b.addEventListener("click",function(){svWrite("update public.breaker_survey_steps set on_at = now() where id = "+open.id+" and on_at is null");});
+      var d=el("button","more",null,box);d.type="button";d.textContent="Discard this test";d.disabled=svBusy;
+      d.addEventListener("click",function(){svWrite("update public.breaker_survey_steps set on_at = now(), is_void = true where id = "+open.id+" and on_at is null");});
+    }else if(gapLeft>0){
+      var g=el("p","sv-big",null,box);el("b",null,"Wait "+mmss(gapLeft),g);g.appendChild(document.createTextNode(" before the next breaker"));
+      el("p",null,"All breakers should be on. This keeps each test's readings separate.",box);
+      if(ll)el("p","sub","Live load now "+kw(ll.w)+" (read "+ll.at+").",box);
+    }else{
+      var nxt=SV_LIST.find(function(c){return !surv.some(function(x){return x.c===c[0];});});
+      el("p","sv-big",nxt?"Ready. Next: "+nxt[0]+".":"All eight circuits tested.",box);
+      el("p",null,nxt?"Tap “Switch off now” on its row, then switch the breaker off.":"Redo any marked noisy, or compare the totals below.",box);
+      if(ll)el("p","sub","Live load now "+kw(ll.w)+" (read "+ll.at+").",box);
+    }
+    if(svMsg)el("p","sv-err",svMsg,box);
+    var ul=$("eSurvList");ul.textContent="";var tot=0,nT=0,base=null;
+    SV_LIST.forEach(function(c){
+      var last=(surv||[]).filter(function(x){return x.c===c[0];})[0]||null,res=last?svResult(last):null;
+      var li=el("li",res?res.k:"todo",null,ul);
+      var nm=el("div","sv-nm",null,li);el("b",null,c[0],nm);el("span","sub",c[1],nm);
+      el("div","sv-res",res?res.t:"Not tested yet",li);
+      var bt=el("div","sv-btns",null,li);
+      if(!(last&&last.on===null)){
+        var b2=el("button","more",last?"Redo":"Switch off now",bt);b2.type="button";
+        b2.disabled=svBusy||!surv||!!open||gapLeft>0;
+        b2.addEventListener("click",function(){svWrite("insert into public.breaker_survey_steps (circuit) values ("+escS(c[0])+")");});
+      }
+      if(last&&last.on!==null){var b3=el("button","more","Discard",bt);b3.type="button";b3.disabled=svBusy;
+        b3.addEventListener("click",function(ev){var b=ev.currentTarget;if(!b.dataset.armed){b.dataset.armed="1";b.textContent="Sure?";setTimeout(function(){delete b.dataset.armed;b.textContent="Discard";},5000);return;}
+          svWrite("update public.breaker_survey_steps set is_void = true where id = "+last.id);});}
+      if(res&&res.k==="done"&&last.draw!==null){tot+=Math.max(0,last.draw);nT++;if(last.bw!==null&&(base===null||last.bw<base))base=last.bw;}
+    });
+    $("eSurvSum").textContent=open?open.c+" is off · "+mmss(now-open.off):(surv&&surv.length?nT+" of "+SV_LIST.length+" tested":"");
+    $("eSurvTot").textContent=nT?"Tested circuits add up to "+kw(tot)+(base!==null?" of a lowest load of "+kw(base)+" during the tests, leaving "+kw(Math.max(0,base-tot))+" unaccounted for (untested circuits, the Quattro's own use and measurement error).":"."):"";
+    var pending=open||gapLeft>0||(surv||[]).some(function(x){return svResult(x).k==="wait";});
+    if(pending&&!svTick)svTick=setInterval(function(){survView();if(Date.now()-svPoll>30000)svLoad();},1000);
+    if(!pending&&svTick){clearInterval(svTick);svTick=null;}
+  }
+  function svLoad(){svPoll=Date.now();return SB.sql(SEL_SURV,{cache:false}).then(function(r){setSurv(r);svMsg="";survView();},function(e){svMsg=SB.explain(e);survView();});}
+  function svWrite(q){
+    if(svBusy)return;svBusy=true;svMsg="";survView();
+    SB.write(q+"; select 1 as ok").then(svLoad,function(e){svMsg=SB.explain(e);})
+      .then(function(){svBusy=false;survView();});
+  }
   var health=[],alerts=[],alLog=[],alBusy=false;
   var AREA={data:"Data coming in",prices:"Agile prices",mains:"Mains",battery:"Site battery",chargers:"Chargers",system:"System"};
   var HL_WORD={ok:"OK",warn:"Check",bad:"Problem",off:"Off"};
@@ -2058,7 +2184,7 @@ window.UI=(function(){
   function logKind(x){return x.n||(x.grace>0&&x.mins>=x.grace)?"alert":"warning";}
   function logKey(x){return x.src+":"+x.id;}
   function logView(){
-    phoneView();
+    phoneView();survView();
     [].forEach.call($("eAlFilt").querySelectorAll("button"),function(b){b.setAttribute("aria-pressed",String(b.dataset.f===logFilter));});
     var rows=alLog.filter(function(x){return logFilter==="all"||logKind(x)===logFilter;});
     var open=alLog.filter(function(x){return !x.ack;}).length;
@@ -2129,6 +2255,9 @@ window.UI=(function(){
   // Alerts start folded too (Dee), with a one-line count; opening is remembered.
   try{if(UI.get("energy","alertsOpen",null)==="true")$("eAlBox").open=true;}catch(e){}
   $("eAlBox").addEventListener("toggle",function(){try{UI.set("energy","alertsOpen",String(this.open));}catch(e){}});
+  // The breaker audit folds too; it opens itself while a breaker is off.
+  try{if(UI.get("energy","survOpen",null)==="true")$("eSurvBox").open=true;}catch(e){}
+  $("eSurvBox").addEventListener("toggle",function(){try{UI.set("energy","survOpen",String(this.open));}catch(e){}});
   // The alarm log is its own fold (Dee, 11 Oct); opening is remembered.
   try{if(UI.get("energy","logOpen",null)==="true")$("eLogBox").open=true;}catch(e){}
   $("eLogBox").addEventListener("toggle",function(){try{UI.set("energy","logOpen",String(this.open));}catch(e){}});
@@ -2517,8 +2646,9 @@ window.UI=(function(){
                           SB.sql(SEL_ALERTS,{cache:false}).catch(function(){return null;}),
                           SB.sql(SEL_ALLOG,{cache:false}).catch(function(){return null;}),
                           SB.sql(SEL_PHONE,{cache:false}).catch(function(){return null;}),
-                          SB.sql(SEL_HOLD,{cache:false}).catch(function(){return null;})]).then(function(r){
-      setHold(r[20]);setRanger(r[8]);setEr(r[9],r[10],r[15]);setFc(r[11],r[12],r[13]);setEv(r[14]);setHealth(r[16]);setPhone(r[19]);setAlerts(r[17],r[18]);
+                          SB.sql(SEL_HOLD,{cache:false}).catch(function(){return null;}),
+                          SB.sql(SEL_SURV,{cache:false}).catch(function(){return null;})]).then(function(r){
+      setHold(r[20]);setSurv(r[21]);svPoll=Date.now();setRanger(r[8]);setEr(r[9],r[10],r[15]);setFc(r[11],r[12],r[13]);setEv(r[14]);setHealth(r[16]);setPhone(r[19]);setAlerts(r[17],r[18]);
       if(r[4])setCars(r[4],r[5]);
       if(r[6])setZaps(r[6],r[7]);
       trend=(r[3]||[]).map(function(x){var o={t:Number(x.t)};["soc","pv","load","mains"].forEach(function(k){var v=Number(x[k]);o[k]=x[k]===null||!isFinite(v)?null:v;});return o;}).filter(function(o){return isFinite(o.t);});
