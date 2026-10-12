@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8">
-<meta name="bundle-version" content="1b06e1ac0ad4 · 2026-10-11 21:04 UTC">
+<meta name="bundle-version" content="e0debab3cf4d · 2026-10-12 12:23 UTC">
 <title>Farm energy</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -725,6 +725,11 @@
   .en-al-log li.dis b{font-weight:600;text-decoration:line-through;text-decoration-thickness:1px}
   .en-al-log li.dis .note{font-style:italic}
   .en-hl-act li.alert{border-left-color:var(--alert)}
+  .en-hold{margin:4px 0 12px;padding:8px 10px;border:1px solid var(--rule);border-radius:6px;background:var(--surface-alt);font-size:.88rem;line-height:1.5}
+  .en-hold .hd-row{display:grid;grid-template-columns:auto minmax(0,1fr);gap:10px;align-items:start}
+  .en-hold input[type=number]{width:4.2em;margin:0 3px;font:inherit;padding:1px 4px}
+  .en-hold .hd-now{margin:4px 0 0 52px;font-size:.8rem}
+  @media (max-width:520px){.en-hold .hd-now{margin-left:0}}
   .en-notes{margin:6px 0 10px;font-size:.86rem;line-height:1.45}
   .en-notes .nt-head{margin:0 0 6px}
   .en-notes .nt-days{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:6px;max-width:420px}
@@ -1028,6 +1033,7 @@
           <div class="en-now-act"><span class="sub" id="eRuleAt"></span><button type="button" class="more" id="eRuleAdd">Add rule</button></div>
         </summary>
         <p class="sub">Checked every 5 minutes, top to bottom. For each charger the first matching rule decides; only one car charges at a time. A charger no rule decides goes to its normal mode.</p>
+        <div class="en-hold" id="eHold"></div>
         <ol class="en-rl" id="eRuleList"></ol>
         <form class="en-re" id="eRuleEdit" hidden>
           <h4 id="eReTitle">New rule</h4>
@@ -1037,6 +1043,8 @@
             <p class="fld"><label class="lab" for="eRePa">Price above (p)</label><input type="number" id="eRePa" step="0.5"></p>
             <p class="fld"><label class="lab" for="eReSb">Site battery below (%)</label><input type="number" id="eReSb" min="0" max="100"></p>
             <p class="fld"><label class="lab" for="eReSa">Site battery at least (%)</label><input type="number" id="eReSa" min="0" max="100"></p>
+            <p class="fld"><label class="lab" for="eReSk">…then keep going down to (%; optional)</label><input type="number" id="eReSk" min="0" max="100"></p>
+            <p class="fld"><label class="lab" for="eReSol">Sun forecast this hour at least (kW)</label><input type="number" id="eReSol" min="0" max="50" step="0.5"></p>
             <p class="fld"><label class="lab" for="eReNc">Car needs charging on</label><select id="eReNc"></select></p>
             <p class="fld"><label class="lab" for="eReNs">…starting below (%; optional)</label><input type="number" id="eReNs" min="5" max="100" step="5"></p>
             <p class="fld"><label class="lab" for="eReNt">…charging to (%; blank = full)</label><input type="number" id="eReNt" min="10" max="100" step="5"></p>
@@ -1803,7 +1811,7 @@ window.UI=(function(){
      deleted from here: "Remove" archives them. Charger normal modes are car_charge_rules.default_mode. */
   var erRules=[],erEval={},erChEval={},erDefs=[],erBusy=false,erEditId=null;
   var SEL_ER="select id, name, enabled, priority, price_below_p::float8 as pb, price_above_p::float8 as pa,"+
-    " site_soc_below_pct::float8 as sb, site_soc_above_pct::float8 as sa, needs_charger_id as nc, needs_target_pct::float8 as nt, needs_start_below_pct::float8 as ns, needs_latched as latch,"+
+    " site_soc_below_pct::float8 as sb, site_soc_above_pct::float8 as sa, site_soc_keep_above_pct::float8 as sk, solar_forecast_above_kw::float8 as sol, needs_charger_id as nc, needs_target_pct::float8 as nt, needs_start_below_pct::float8 as ns, needs_latched as latch,"+
     " cars_idle as idle, car_charging as cc, to_char(time_from,'HH24:MI') as tf, to_char(time_to,'HH24:MI') as tt,"+
     " action as act, action_charger_id as ach, action_mode as amo, action_text as atx, repeat_hours::float8 as rp,"+
     " to_char(last_action_at at time zone 'Europe/London','Dy HH24:MI') as lastact"+
@@ -1811,11 +1819,34 @@ window.UI=(function(){
   var SEL_EREVAL="select rule_id, rule, matched, outcome from public.energy_rules_evaluate(false)";
   var SEL_ERDEF="select k.charger_id as id, c.name, k.default_mode as dm, array_to_string(c.allowed_modes, ',') as modes"+
     " from public.car_charge_rules k join public.chargers c on c.id = k.charger_id where c.is_active order by c.id";
+  /* Full-battery hold (Dee, 12 Oct 2026): don't switch the mains in while the battery is full and the sun is out,
+     or the Fronius surplus goes to the grid. generator_settings.full_sun_*; public.mains_full_sun_hold() says if it is on now. */
+  var SEL_HOLD="select s.full_sun_hold_enabled as on, s.full_sun_soc_pct::float8 as soc, s.full_sun_solar_kw::float8 as kw, h.held, h.why"+
+    " from public.generator_settings s cross join public.mains_full_sun_hold() h where s.id = 1";
+  var hold=null;
+  function setHold(r){if(r&&r[0]){var x=r[0];hold={on:x.on===true||x.on==="true",soc:Number(x.soc),kw:Number(x.kw),held:x.held===true||x.held==="true",why:String(x.why||"")};}}
+  function holdView(){
+    var box=$("eHold");if(!box)return;box.textContent="";if(!hold)return;
+    var row=el("div","hd-row",null,box);
+    var sw=el("label","en-sw",null,row),cb=el("input",null,null,sw);el("span",null,null,sw);
+    cb.type="checkbox";cb.setAttribute("role","switch");cb.checked=hold.on;cb.disabled=erBusy;cb.setAttribute("aria-label","Full-battery hold");
+    cb.addEventListener("change",function(){erWrite("update public.generator_settings set full_sun_hold_enabled = "+(cb.checked?"true":"false")+" where id = 1");});
+    var t=el("div","hd-txt",null,row);el("b",null,"Full-battery hold. ",t);
+    t.appendChild(document.createTextNode("Don't switch the mains in while the site battery is at least "));
+    function box2(val,min,max,step,col,aria,unit){var i=el("input",null,null,t);i.type="number";i.min=String(min);i.max=String(max);i.step=String(step);i.value=String(val);
+      i.disabled=erBusy;i.setAttribute("aria-label",aria);t.appendChild(document.createTextNode(unit));
+      i.addEventListener("change",function(){var v=Number(i.value);if(i.value===""||!isFinite(v)||v<min||v>max){i.value=String(val);return;}
+        erWrite("update public.generator_settings set "+col+" = "+v+" where id = 1");});}
+    box2(hold.soc,50,100,1,"full_sun_soc_pct","Hold from battery %","% and at least ");
+    box2(hold.kw,0,50,0.5,"full_sun_solar_kw","Hold from sun forecast kW"," kW of sun is forecast — the Fronius surplus would go out to the grid. Your own runs and a charging car still get the mains.");
+    var st=el("div","sub hd-now",null,box);
+    st.textContent=!hold.on?"Switched off.":(hold.held?"Holding now — ":"Not holding now — ")+hold.why+".";
+  }
   function setEr(r0,r1,r2){
     if(r0)erRules=r0.map(function(x){var n=function(k){var v=Number(x[k]);return x[k]===null||x[k]===undefined||x[k]===""||!isFinite(v)?null:v;};
       var b=function(k){return x[k]===null||x[k]===undefined?null:(x[k]===true||x[k]==="true");};
       return {id:Number(x.id),name:String(x.name||""),enabled:x.enabled===true||x.enabled==="true",priority:Number(x.priority)||0,
-        pb:n("pb"),pa:n("pa"),sb:n("sb"),sa:n("sa"),nc:n("nc"),nt:n("nt"),ns:n("ns"),latch:x.latch===true||x.latch==="true",idle:b("idle"),cc:b("cc"),tf:x.tf||null,tt:x.tt||null,
+        pb:n("pb"),pa:n("pa"),sb:n("sb"),sa:n("sa"),sk:n("sk"),sol:n("sol"),nc:n("nc"),nt:n("nt"),ns:n("ns"),latch:x.latch===true||x.latch==="true",idle:b("idle"),cc:b("cc"),tf:x.tf||null,tt:x.tt||null,
         act:String(x.act||""),ach:n("ach"),amo:x.amo||null,atx:String(x.atx||""),rp:n("rp"),lastact:x.lastact||""};});
     if(r1){erEval={};erChEval={};r1.forEach(function(x){if(x.rule_id!==null&&x.rule_id!==undefined)erEval[Number(x.rule_id)]={m:x.matched===true||x.matched==="true",o:String(x.outcome||"")};
       else erChEval[String(x.rule)]={m:x.matched===true||x.matched==="true",o:String(x.outcome||"")};});}
@@ -1828,7 +1859,8 @@ window.UI=(function(){
     if(r.pb!==null)w.push("price below "+pfmt(r.pb));
     if(r.pa!==null)w.push("price above "+pfmt(r.pa));
     if(r.sb!==null)w.push("site battery below "+r.sb+"%");
-    if(r.sa!==null)w.push("site battery at least "+r.sa+"%");
+    if(r.sa!==null)w.push("site battery at least "+r.sa+"%"+(r.sk!==null&&r.sk<r.sa?" (then keeps going until it is down to "+r.sk+"%)":""));
+    if(r.sol!==null)w.push("at least "+r.sol+" kW of sun is forecast this hour");
     if(r.nc!==null)w.push(r.ns!==null?"the car on "+chName(r.nc)+" is below "+r.ns+"% (then charges "+(r.nt!==null?"to "+r.nt+"%":"until full")+")"
       :"the car on "+chName(r.nc)+" needs charging "+(r.nt!==null?"to "+r.nt+"%":"(until full)"));
     if(r.idle!==null)w.push(r.idle?"cars are idle":"a car is charging or waiting");
@@ -1841,6 +1873,7 @@ window.UI=(function(){
     return (w.length?"When "+w.join(" and "):"Always")+", "+t+".";
   }
   function erView(){
+    holdView();
     var ul=$("eRuleList");ul.textContent="";
     erRules.forEach(function(r,i){
       var ev=erEval[r.id],li=el("li",(r.enabled?"":"off")+(r.enabled&&ev&&ev.m?" hit":""),null,ul);
@@ -2109,7 +2142,7 @@ window.UI=(function(){
   }
   SB.available().then(function(m){if(m){alertPeek();setInterval(alertPeek,5*60000);}});
 
-  function erLoad(){return Promise.all([SB.sql(SEL_ER,{cache:false}),SB.sql(SEL_EREVAL,{cache:false}),SB.sql(SEL_ERDEF,{cache:false})]).then(function(r){setEr(r[0],r[1],r[2]);});}
+  function erLoad(){return Promise.all([SB.sql(SEL_ER,{cache:false}),SB.sql(SEL_EREVAL,{cache:false}),SB.sql(SEL_ERDEF,{cache:false}),SB.sql(SEL_HOLD,{cache:false}).catch(function(){return null;})]).then(function(r){setEr(r[0],r[1],r[2]);setHold(r[3]);});}
   function erWrite(q){
     if(erBusy)return Promise.resolve();erBusy=true;erView();$("eRuleAt").textContent="Saving…";
     return SB.write(q+"; select 1 as ok").then(erLoad).then(function(){$("eRuleAt").textContent="Saved";},function(e){$("eRuleAt").textContent=SB.explain(e);})
@@ -2131,7 +2164,7 @@ window.UI=(function(){
     var chOpts=[["","—"]].concat(erDefs.map(function(d){return [String(d.id),d.name];}));
     fillSel($("eReNc"),chOpts,r?r.nc:"");fillSel($("eReCh"),erDefs.map(function(d){return [String(d.id),d.name];}),r&&r.ach!==null?r.ach:(erDefs[0]?erDefs[0].id:""));
     $("eReName").value=r?r.name:"";
-    [["eRePb","pb"],["eRePa","pa"],["eReSb","sb"],["eReSa","sa"],["eReNs","ns"],["eReNt","nt"],["eReRp","rp"]].forEach(function(x){$(x[0]).value=r&&r[x[1]]!==null?String(r[x[1]]):"";});
+    [["eRePb","pb"],["eRePa","pa"],["eReSb","sb"],["eReSa","sa"],["eReSk","sk"],["eReSol","sol"],["eReNs","ns"],["eReNt","nt"],["eReRp","rp"]].forEach(function(x){$(x[0]).value=r&&r[x[1]]!==null?String(r[x[1]]):"";});
     if(!r)$("eReRp").value="12";
     $("eReIdle").value=r&&r.idle!==null?String(r.idle):"";$("eReCc").value=r&&r.cc!==null?String(r.cc):"";
     $("eReTf").value=r&&r.tf?r.tf:"";$("eReTt").value=r&&r.tt?r.tt:"";
@@ -2146,16 +2179,17 @@ window.UI=(function(){
     ev.preventDefault();var m=$("eReMsg");m.className="hb-msg bad";
     var num=function(id,lo,hi){var v=$(id).value.trim();if(v==="")return "null";var n=Number(v);if(!isFinite(n)||n<lo||n>hi)throw new Error(id);return String(n);};
     var vals;
-    try{vals={name:$("eReName").value.trim(),pb:num("eRePb",-100,200),pa:num("eRePa",-100,200),sb:num("eReSb",0,100),sa:num("eReSa",0,100),
+    try{vals={name:$("eReName").value.trim(),pb:num("eRePb",-100,200),pa:num("eRePa",-100,200),sb:num("eReSb",0,100),sa:num("eReSa",0,100),sk:num("eReSk",0,100),sol:num("eReSol",0,50),
       nc:$("eReNc").value||"null",ns:num("eReNs",5,100),nt:num("eReNt",10,100),rp:num("eReRp",0,168)};}
-    catch(e){m.textContent="Check the numbers (prices −100 to 200p, battery 0–100%, target 10–100%).";return;}
+    catch(e){m.textContent="Check the numbers (prices −100 to 200p, battery 0–100%, sun 0–50 kW, target 10–100%).";return;}
     var act=$("eReAct").value,tf=$("eReTf").value,tt=$("eReTt").value;
     if(!vals.name){m.textContent="Give the rule a name.";return;}
     if(!!tf!==!!tt){m.textContent="Set both times, or neither.";return;}
     if(vals.nc==="null"&&(vals.nt!=="null"||vals.ns!=="null")){m.textContent="Pick which charger's car the levels are for.";return;}
     if(vals.ns!=="null"&&vals.nt!=="null"&&Number(vals.ns)>=Number(vals.nt)){m.textContent="'Starting below' must be lower than 'charging to'.";return;}
+    if(vals.sk!=="null"&&(vals.sa==="null"||Number(vals.sk)>=Number(vals.sa))){m.textContent="'Keep going down to' needs 'Site battery at least', and must be lower.";return;}
     if(act==="notify"&&!$("eReTx").value.trim()){m.textContent="Write the message.";return;}
-    var cols={name:escS(vals.name),price_below_p:vals.pb,price_above_p:vals.pa,site_soc_below_pct:vals.sb,site_soc_above_pct:vals.sa,
+    var cols={name:escS(vals.name),price_below_p:vals.pb,price_above_p:vals.pa,site_soc_below_pct:vals.sb,site_soc_above_pct:vals.sa,site_soc_keep_above_pct:vals.sk,solar_forecast_above_kw:vals.sol,
       needs_charger_id:vals.nc,needs_target_pct:vals.nt,needs_start_below_pct:vals.ns,cars_idle:$("eReIdle").value||"null",car_charging:$("eReCc").value||"null",
       time_from:tf?escS(tf):"null",time_to:tt?escS(tt):"null",action:escS(act),
       action_charger_id:act==="charger_mode"?String(Number($("eReCh").value)):"null",action_mode:act==="charger_mode"?escS($("eReMo").value):"null",
@@ -2482,8 +2516,9 @@ window.UI=(function(){
                           SB.sql(SEL_HEALTH,{cache:false}).catch(function(){return null;}),
                           SB.sql(SEL_ALERTS,{cache:false}).catch(function(){return null;}),
                           SB.sql(SEL_ALLOG,{cache:false}).catch(function(){return null;}),
-                          SB.sql(SEL_PHONE,{cache:false}).catch(function(){return null;})]).then(function(r){
-      setRanger(r[8]);setEr(r[9],r[10],r[15]);setFc(r[11],r[12],r[13]);setEv(r[14]);setHealth(r[16]);setPhone(r[19]);setAlerts(r[17],r[18]);
+                          SB.sql(SEL_PHONE,{cache:false}).catch(function(){return null;}),
+                          SB.sql(SEL_HOLD,{cache:false}).catch(function(){return null;})]).then(function(r){
+      setHold(r[20]);setRanger(r[8]);setEr(r[9],r[10],r[15]);setFc(r[11],r[12],r[13]);setEv(r[14]);setHealth(r[16]);setPhone(r[19]);setAlerts(r[17],r[18]);
       if(r[4])setCars(r[4],r[5]);
       if(r[6])setZaps(r[6],r[7]);
       trend=(r[3]||[]).map(function(x){var o={t:Number(x.t)};["soc","pv","load","mains"].forEach(function(k){var v=Number(x[k]);o[k]=x[k]===null||!isFinite(v)?null:v;});return o;}).filter(function(o){return isFinite(o.t);});
